@@ -15,6 +15,7 @@ module Data.SafeCopy.Derive
     , deriveSafeCopyHappstackDataIndexedType
     ) where
 
+import Data.List ((\\))
 import Data.Serialize (getWord8, putWord8, label)
 import Data.SafeCopy.SafeCopy
 
@@ -264,12 +265,21 @@ internalDeriveSafeCopy deriveType versionId kindName tyName = do
     worker = worker' (conT tyName)
     worker' tyBase context tyvars cons =
       let ty = foldl appT tyBase [ varT $ tyVarName var | var <- tyvars ]
+          usedvars :: [Name]
+          usedvars = [ name | (_,con) <- cons, name <- varsOfCon con ]
+           where
+            varsOfCon :: Con -> [Name]
+            varsOfCon con = case con of
+              NormalC _ stricttys    -> [ t | (_,VarT t) <- stricttys ]
+              RecC _ varstricttys    -> [ t | (_,_,VarT t) <- varstricttys ]
+              InfixC (_,tl) _ (_,tr) -> [ t | VarT t <- [tl, tr] ]
+              ForallC tyvarbndr _ c  -> varsOfCon c \\ [ tyVarName t | t <- tyvarbndr ]
 #if MIN_VERSION_template_haskell(2,10,0)
           safeCopyClass args = foldl appT (conT ''SafeCopy) args
 #else
           safeCopyClass args = classP ''SafeCopy args
 #endif
-      in (:[]) <$> instanceD (cxt $ [safeCopyClass [varT $ tyVarName var] | var <- tyvars] ++ map return context)
+      in (:[]) <$> instanceD (cxt $ [safeCopyClass [varT $ tyVarName var] | var <- tyvars, tyVarName var `elem` usedvars ] ++ map return context)
                                        (conT ''SafeCopy `appT` ty)
                                        [ mkPutCopy deriveType cons
                                        , mkGetCopy deriveType (show tyName) cons
